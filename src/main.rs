@@ -61,6 +61,10 @@ enum Commands {
     },
     Clear,
     Info,
+    Derive {
+        #[arg(long, default_value = "false")]
+        show_path: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -363,6 +367,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("\n📍 Address: {}", w.get_address());
                 println!("   Type: BIP86 Taproot (P2TR)");
                 println!("   XPub: {}\n", w.get_descriptor());
+            } else {
+                println!("\n❌ No wallet loaded\n");
+            }
+        }
+        
+        Commands::Derive { show_path } => {
+            if show_path {
+                let path = if network == Network::Testnet { "m/86'/1'/0'/0/0" } else { "m/86'/0'/0'/0/0" };
+                println!("\n🔑 BIP86 Derivation Path:");
+                println!("   {}", path);
+                println!("   (testnet: m/86'/1'/0'/0/0, mainnet: m/86'/0'/0'/0/0)\n");
+            }
+            if let Some(w) = &wallet {
+                println!("\n📍 Address: {}", w.get_address());
+                println!("   Derivation: BIP86");
+                println!("   Network: {}\n", network);
             } else {
                 println!("\n❌ No wallet loaded\n");
             }
