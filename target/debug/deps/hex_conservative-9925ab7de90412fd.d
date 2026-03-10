@@ -1,0 +1,10 @@
+/home/ubuntu/.openclaw/workspace/btc-wallet-rust/target/debug/deps/hex_conservative-9925ab7de90412fd.d: /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/lib.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/buf_encoder.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/display.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/error.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/iter.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/parse.rs
+
+/home/ubuntu/.openclaw/workspace/btc-wallet-rust/target/debug/deps/libhex_conservative-9925ab7de90412fd.rmeta: /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/lib.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/buf_encoder.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/display.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/error.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/iter.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/parse.rs
+
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/lib.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/buf_encoder.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/display.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/error.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/iter.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hex-conservative-0.2.2/src/parse.rs:

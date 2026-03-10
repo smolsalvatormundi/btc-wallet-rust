@@ -1,0 +1,1 @@
+/home/ubuntu/.openclaw/workspace/btc-wallet-rust/target/debug/btc-wallet-rust: /home/ubuntu/.openclaw/workspace/btc-wallet-rust/src/api.rs /home/ubuntu/.openclaw/workspace/btc-wallet-rust/src/main.rs /home/ubuntu/.openclaw/workspace/btc-wallet-rust/src/wallet.rs
