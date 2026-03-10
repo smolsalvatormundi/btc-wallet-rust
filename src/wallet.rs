@@ -52,8 +52,9 @@ impl Wallet {
             .derive_priv(&secp, &derivation_path)
             .map_err(|e| format!("Derivation failed: {}", e))?;
         
-        // Create keypair from the derived private key using to_keypair method
+        // DEBUG: Print the derived key
         let keypair = derived.to_keypair(&secp);
+        println!("DEBUG pubkey: {}", keypair.public_key());
         
         // Create x-only public key (for Taproot)
         // from_keypair returns (XOnlyPublicKey, Parity), we only need the first

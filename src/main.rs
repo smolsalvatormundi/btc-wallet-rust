@@ -65,7 +65,6 @@ enum Commands {
         #[arg(long, default_value = "false")]
         show_path: bool,
     },
-    Debug,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -388,22 +387,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("\n❌ No wallet loaded\n");
             }
         }
-        
-        Commands::Debug => {
-            use bdk::bitcoin::secp256k1::Secp256k1;
-            
-            let mnemonic = "witness fine topic kiss harsh monster ahead enjoy treat short improve solve";
-            let seed = bdk::bip39::mnemonic_to_seed(mnemonic, "").unwrap();
-            
-            let secp = Secp256k1::new();
-            let xpriv = bdk::bip32::ExtendedPrivKey::new_master(bdk::bitcoin::Network::Testnet, &seed).unwrap();
-            
-            let path = "m/86'/1'/0'/0/0".parse().unwrap();
-            let child = xpriv.derive_priv(&secp, &path).unwrap();
-            
-            let keypair = child.to_keypair(&secp);
-            println!("pubkey: {}", keypair.public_key());
-        }
     }
     
     Ok(())
@@ -439,44 +422,3 @@ fn load_wallet(network: Network) -> Result<Option<Wallet>, Box<dyn std::error::E
     Ok(Some(wallet))
 }
 
-#[derive(Debug, Clone)]
-struct DebugCmd;
-
-impl DebugCmd {
-    fn run(&self) {
-        use bdk::bitcoin::secp256k1::Secp256k1;
-        
-        let mnemonic = "witness fine topic kiss harsh monster ahead enjoy treat short improve solve";
-        let seed = bdk::keys::bip39::mnemonic_to_seed(mnemonic, "").unwrap();
-        
-        let root = bdk::keys::bip32::DerivationPath::from_str("m").unwrap();
-        // Manual derivation for BIP86 testnet
-        let path = "m/86'/1'/0'/0/0".parse().unwrap();
-        
-        let secp = Secp256k1::new();
-        let extended_priv = bdk::keys::bip32::ExtendedPrivKey::new(&bdk::bitcoin::Network::Testnet, &seed).unwrap();
-        
-        let child = extended_priv.derive_priv(&secp, &path).unwrap();
-        
-        println!("pubkey: {}", child.private_key.public_key(&secp));
-    }
-}
-
-// Debug: print key derivation
-#[command]
-fn debug() -> Result<(), String> {
-    use bdk::bitcoin::secp256k1::Secp256k1;
-    
-    let mnemonic = "witness fine topic kiss harsh monster ahead enjoy treat short improve solve";
-    let seed = bdk::bip39::mnemonic_to_seed(mnemonic, "").map_err(|e| e.to_string())?;
-    
-    let secp = Secp256k1::new();
-    let extended_priv = bdk::bip32::ExtendedPrivKey::new(&bdk::bitcoin::Network::Testnet, &seed).map_err(|e| e.to_string())?;
-    
-    // BIP86 testnet
-    let path = "m/86'/1'/0'/0/0".parse().map_err(|e: bdk::bip32::Error| e.to_string())?;
-    let child = extended_priv.derive_priv(&secp, &path).map_err(|e| e.to_string())?;
-    
-    println!("pubkey: {}", child.private_key.public_key(&secp));
-    Ok(())
-}
