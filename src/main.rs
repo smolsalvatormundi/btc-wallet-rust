@@ -53,15 +53,15 @@ enum Commands {
     },
     /// Send BTC to an address
     Send {
-        destination: String,
-        amount: u64,
+        destination: Option<String>,
+        amount: Option<u64>,
         /// Interactive coin selection (pick which UTXOs to spend)
         #[arg(long = "coin-select", help = "Interactive coin selection (UTXO picker)", default_value = "false")]
         coin_select: bool,
     },
     /// Send all balance to an address (minus fee)
     SendAll {
-        destination: String,
+        destination: Option<String>,
         /// Interactive coin selection (pick which UTXOs to spend)
         #[arg(long = "coin-select", help = "Interactive coin selection (UTXO picker)", default_value = "false")]
         coin_select: bool,
@@ -394,7 +394,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
             };
             
-            let dest_address = Address::from_str(&destination)
+            // Get destination - prompt if not provided
+            let dest_str = match destination {
+                Some(ref d) => d.clone(),
+                None => {
+                    print!("Enter destination address: ");
+                    io::stdout().flush().ok();
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input).ok();
+                    input.trim().to_string()
+                }
+            };
+            
+            // Get amount - prompt if not provided
+            let amount_val: u64 = match amount {
+                Some(a) => a,
+                None => {
+                    print!("Enter amount in sats: ");
+                    io::stdout().flush().ok();
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input).ok();
+                    input.trim().parse().unwrap_or(0)
+                }
+            };
+            
+            if dest_str.is_empty() || amount_val == 0 {
+                eprintln!("❌ Invalid destination or amount\n");
+                std::process::exit(1);
+            }
+            
+            let dest_address = Address::from_str(&dest_str)
                 .map_err(|e| format!("Invalid address: {}", e))?;
             
             let dest_address = dest_address.require_network(network)
@@ -420,7 +449,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             if coin_select {
                 // Interactive coin selection
-                interactive_coin_selection(&rt, &api, &w, &dest_address, amount, false)?;
+                interactive_coin_selection(&rt, &api, &w, &dest_address, amount_val, false)?;
             } else {
                 // Default: use all UTXOs
                 let inputs: Vec<_> = utxos.iter().map(|u| {
@@ -429,7 +458,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (txid, u.vout, Amount::from_sat(u.value), script)
                 }).collect();
                 
-                let amount_sat = Amount::from_sat(amount);
+                let amount_sat = Amount::from_sat(amount_val);
                 let psbt = create_send_psbt(
                     &inputs,
                     &dest_address,
@@ -464,7 +493,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
             };
             
-            let dest_address = Address::from_str(&destination)
+            // Get destination - prompt if not provided
+            let dest_str = match destination {
+                Some(ref d) => d.clone(),
+                None => {
+                    print!("Enter destination address: ");
+                    io::stdout().flush().ok();
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input).ok();
+                    input.trim().to_string()
+                }
+            };
+            
+            if dest_str.is_empty() {
+                eprintln!("❌ Invalid destination\n");
+                std::process::exit(1);
+            }
+            
+            let dest_address = Address::from_str(&dest_str)
                 .map_err(|e| format!("Invalid address: {}", e))?;
             
             let dest_address = dest_address.require_network(network)
