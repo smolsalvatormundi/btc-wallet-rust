@@ -440,7 +440,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
             };
             
-            let dest_address = Address::from_str(destination)
+            let dest_address = Address::from_str(&destination)
                 .map_err(|e| format!("Invalid address: {}", e))?;
             let dest_address = dest_address.require_network(network)
                 .map_err(|e| format!("Invalid address for network: {}", e))?;
@@ -517,7 +517,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Finalized PSBT");
             
             let _serialized = serialize_psbt(&psbt)?;
-            let tx_hex = psbt.extract_transaction().to_hex();
+            let tx_hex = psbt.extract_tx().to_hex();
             
             let txid = rt.block_on(api.broadcast_tx(&tx_hex))?;
             println!("\n✅ Broadcast successful!");
