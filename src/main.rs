@@ -517,7 +517,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Finalized PSBT");
             
             let _serialized = serialize_psbt(&psbt)?;
-            let tx_hex = psbt.extract_tx().unwrap().to_hex();
+            let tx = psbt.extract_tx().unwrap();
+            let tx_hex = bitcoin::consensus::encode::serialize(&tx).iter().map(|b| format!("{:02x}", b)).collect::<String>();
             
             let txid = rt.block_on(api.broadcast_tx(&tx_hex))?;
             println!("\n✅ Broadcast successful!");
