@@ -37,49 +37,72 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Generate a new BIP39 mnemonic and wallet
     New,
+    /// Import wallet from BIP39 mnemonic
     Import { mnemonic: String },
+    /// Show wallet address
     Address,
+    /// Show wallet balance
     Balance,
+    /// List unspent transaction outputs (UTXOs)
     Utxos {
+        /// Show values in sats (default: BTC)
         #[arg(long, default_value = "false")]
         sats: bool,
     },
+    /// Send BTC to an address
     Send {
         destination: String,
         amount: u64,
+        /// Interactive coin selection (UTXO picker)
         #[arg(long, default_value = "false")]
         coin_select: bool,
     },
+    /// Send all balance to an address (minus fee)
     SendAll {
         destination: String,
+        /// Interactive coin selection (UTXO picker)
         #[arg(long, default_value = "false")]
         coin_select: bool,
     },
+    /// Sign a PSBT file with BIP86 key
     SignPsbt {
         psbt_file: String,
+        /// Output file path for signed PSBT
         #[arg(long)]
         output: Option<String>,
     },
+    /// Decode and display PSBT details
     DecodePsbt {
         psbt_file: String,
     },
+    /// Broadcast a signed PSBT to the network
     Broadcast {
         psbt_file: String,
     },
+    /// Clear/delete wallet from storage
     Clear,
+    /// Show wallet information
     Info,
+    /// Analyze UTXOs for ordinals/inscriptions/rare sats
     Ordinals,
+    /// Sweep UTXOs to destination (protects rare/inscribed by default)
     Sweep {
         destination: String,
+        /// Include UTXOs with inscriptions (dangerous!)
         #[arg(long, default_value = "false")]
         include_inscribed: bool,
+        /// Include rare sats (dangerous!)
         #[arg(long, default_value = "false")]
         include_rare: bool,
+        /// Minimum UTXO value to include
         #[arg(long, default_value = "0")]
         min_value: u64,
     },
+    /// Show derivation path information
     Derive {
+        /// Display the BIP86 derivation path
         #[arg(long, default_value = "false")]
         show_path: bool,
     },
