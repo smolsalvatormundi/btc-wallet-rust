@@ -55,15 +55,15 @@ enum Commands {
     Send {
         destination: String,
         amount: u64,
-        /// Interactive coin selection (UTXO picker)
-        #[arg(long, default_value = "false")]
+        /// Interactive coin selection (pick which UTXOs to spend)
+        #[arg(long = "coin-select", help = "Interactive coin selection (UTXO picker)", default_value = "false")]
         coin_select: bool,
     },
     /// Send all balance to an address (minus fee)
     SendAll {
         destination: String,
-        /// Interactive coin selection (UTXO picker)
-        #[arg(long, default_value = "false")]
+        /// Interactive coin selection (pick which UTXOs to spend)
+        #[arg(long = "coin-select", help = "Interactive coin selection (UTXO picker)", default_value = "false")]
         coin_select: bool,
     },
     /// Sign a PSBT file with BIP86 key
@@ -90,14 +90,14 @@ enum Commands {
     /// Sweep UTXOs to destination (protects rare/inscribed by default)
     Sweep {
         destination: String,
-        /// Include UTXOs with inscriptions (dangerous!)
-        #[arg(long, default_value = "false")]
+        /// Include UTXOs with inscriptions (DANGER: may lose valuable inscriptions!)
+        #[arg(long = "include-inscribed", help = "Include UTXOs with inscriptions (dangerous!)", default_value = "false")]
         include_inscribed: bool,
-        /// Include rare sats (dangerous!)
-        #[arg(long, default_value = "false")]
+        /// Include rare sats (DANGER: may lose valuable sats!)
+        #[arg(long = "include-rare", help = "Include rare sats (dangerous!)", default_value = "false")]
         include_rare: bool,
-        /// Minimum UTXO value to include
-        #[arg(long, default_value = "0")]
+        /// Minimum UTXO value to include in sats
+        #[arg(long = "min-value", help = "Minimum UTXO value in sats", default_value = "0")]
         min_value: u64,
     },
     /// Show derivation path information
