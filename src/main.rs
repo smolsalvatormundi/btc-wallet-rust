@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use api::MempoolApi;
+use api::{MempoolApi, identify_rare_sat};
 use wallet::{Wallet, create_send_psbt, parse_psbt, serialize_psbt};
 
 fn get_wallet_dir() -> PathBuf {
@@ -61,6 +61,16 @@ enum Commands {
     },
     Clear,
     Info,
+    Ordinals,
+    Sweep {
+        destination: String,
+        #[arg(long, default_value = "false")]
+        include_inscribed: bool,
+        #[arg(long, default_value = "false")]
+        include_rare: bool,
+        #[arg(long, default_value = "0")]
+        min_value: u64,
+    },
     Derive {
         #[arg(long, default_value = "false")]
         show_path: bool,
@@ -370,6 +380,153 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("\n❌ No wallet loaded\n");
             }
+        }
+        
+        Commands::Ordinals => {
+            println!("\n🔍 Analyzing UTXOs for ordinals/inscriptions...\n");
+            
+            let w = match &wallet {
+                Some(w) => w,
+                None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
+            };
+            
+            let api = MempoolApi::new(cli.testnet);
+            let rt = tokio::runtime::Runtime::new()?;
+            let utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
+            
+            if utxos.is_empty() {
+                println!("No UTXOs found.");
+                return Ok(());
+            }
+            
+            let block_height = rt.block_on(api.get_block_height()).unwrap_or(0);
+            
+            let mut inscribed = 0;
+            let mut rare = 0;
+            
+            for utxo in &utxos {
+                let has_inscription = rt.block_on(api.check_inscription(&utxo.txid, utxo.vout)).unwrap_or(false);
+                let rare_info = identify_rare_sat(utxo.value, block_height);
+                
+                if has_inscription {
+                    inscribed += 1;
+                    println!("📜 INSCRIBED");
+                    println!("   {}:{} - {} sats\n", utxo.txid, utxo.vout, utxo.value);
+                } else if rare_info.is_some() {
+                    rare += 1;
+                    let r = rare_info.unwrap();
+                    println!("⭐ RARE: {}", r.0);
+                    println!("   {}:{} - {} sats", utxo.txid, utxo.vout, utxo.value);
+                    println!("   {}\n", r.1);
+                }
+            }
+            
+            let normal = utxos.len() - inscribed - rare;
+            println!("\n📊 Summary:");
+            println!("   Inscribed: {}", inscribed);
+            println!("   Rare: {}", rare);
+            println!("   Normal: {}", normal);
+            println!("   Total: {}\n", utxos.len());
+        }
+        
+        Commands::Sweep { destination, include_inscribed, include_rare, min_value } => {
+            println!("\n🧹 Sweeping UTXOs to {}...", destination);
+            println!("   Exclude inscribed: {}", !include_inscribed);
+            println!("   Exclude rare sats: {}", !include_rare);
+            println!("   Min value: {} sats\n", min_value);
+            
+            let w = match &wallet {
+                Some(w) => w,
+                None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
+            };
+            
+            let dest_address = Address::from_str(destination)
+                .map_err(|e| format!("Invalid address: {}", e))?;
+            let dest_address = dest_address.require_network(network)
+                .map_err(|e| format!("Invalid address for network: {}", e))?;
+            
+            let api = MempoolApi::new(cli.testnet);
+            let rt = tokio::runtime::Runtime::new()?;
+            let all_utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
+            
+            if all_utxos.is_empty() {
+                println!("No UTXOs found.");
+                return Ok(());
+            }
+            
+            let block_height = rt.block_on(api.get_block_height()).unwrap_or(0);
+            
+            let mut eligible_utxos = Vec::new();
+            let mut total_value = 0u64;
+            
+            for utxo in &all_utxos {
+                if utxo.value < min_value {
+                    println!("   ⏭️  Skipping {}:{} - below min value ({} sats)", 
+                        utxo.txid, utxo.vout, utxo.value);
+                    continue;
+                }
+                
+                let has_inscription = rt.block_on(api.check_inscription(&utxo.txid, utxo.vout)).unwrap_or(false);
+                if !include_inscribed && has_inscription {
+                    println!("   ⛔ Excluding {}:{} - has inscription", utxo.txid, utxo.vout);
+                    continue;
+                }
+                
+                let rare_info = identify_rare_sat(utxo.value, block_height);
+                if !include_rare && rare_info.is_some() {
+                    let r = rare_info.unwrap();
+                    println!("   ⛔ Excluding {}:{} - {} ({})", utxo.txid, utxo.vout, r.0, r.1);
+                    continue;
+                }
+                
+                println!("   ✅ Including {}:{} - {} sats", utxo.txid, utxo.vout, utxo.value);
+                eligible_utxos.push(utxo.clone());
+                total_value += utxo.value;
+            }
+            
+            if eligible_utxos.is_empty() {
+                println!("\n❌ No eligible UTXOs to sweep.");
+                return Ok(());
+            }
+            
+            let fee = 1000u64;
+            let sweep_amount = total_value.saturating_sub(fee);
+            
+            println!("\n📊 Sweeping {} UTXOs totaling {} sats", eligible_utxos.len(), total_value);
+            println!("   Sweep amount: {} sats (after {} sats fee)\n", sweep_amount, fee);
+            
+            let inputs: Vec<_> = eligible_utxos.iter().map(|u| {
+                let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
+                let script = w.get_address().script_pubkey().as_bytes().to_vec();
+                (txid, u.vout, Amount::from_sat(u.value), script)
+            }).collect();
+            
+            let psbt = create_send_psbt(
+                &inputs,
+                &dest_address,
+                Amount::from_sat(sweep_amount),
+                w.get_address(),
+                network,
+            ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
+            
+            let mut psbt = psbt;
+            let signed = w.sign_psbt(&mut psbt)?;
+            println!("   ✍️  Signed {} input(s)", signed);
+            
+            w.finalize_psbt(&mut psbt)?;
+            println!("   Finalized PSBT");
+            
+            let _serialized = serialize_psbt(&psbt)?;
+            let tx_hex = psbt.extract_transaction().to_hex();
+            
+            let txid = rt.block_on(api.broadcast_tx(&tx_hex))?;
+            println!("\n✅ Broadcast successful!");
+            println!("   TXID: {}", txid);
+            println!("   {}\n", if cli.testnet { 
+                format!("https://mempool.space/testnet/tx/{}", txid)
+            } else {
+                format!("https://mempool.space/tx/{}", txid)
+            });
         }
         
         Commands::Derive { show_path } => {

@@ -152,6 +152,49 @@ impl MempoolApi {
         
         Ok(info)
     }
+    
+    /// Check if a UTXO has an inscription
+    pub async fn check_inscription(&self, txid: &str, vout: u32) -> Result<bool, String> {
+        let url = format!("{}/tx/{}/outspend/{}", self.base_url, txid, vout);
+        
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            return Ok(false);
+        }
+        
+        let outspend: Option<OutSpend> = response.json().await.ok();
+        
+        Ok(outspend.map(|o| o.inscription.is_some()).unwrap_or(false))
+    }
+    
+    /// Get current block height
+    pub async fn get_block_height(&self) -> Result<u64, String> {
+        let url = format!("{}/blocks/tip/height", self.base_url);
+        
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            return Err(format!("API error: {}", response.status()));
+        }
+        
+        let height: u64 = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse block height: {}", e))?;
+        
+        Ok(height)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,4 +225,66 @@ pub struct MempoolStats {
     pub funded_txo_count: u64,
     pub spent_txo_count: u64,
     pub total_sats: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutSpend {
+    pub spent: bool,
+    pub txid: Option<String>,
+    pub vin: Option<u32>,
+    pub status: Option<OutSpendStatus>,
+    pub inscription: Option<Inscription>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutSpendStatus {
+    pub confirmed: bool,
+    pub block_height: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Inscription {
+    pub id: String,
+    pub number: i64,
+}
+
+/// Identify if a satoshi is rare based on ordinal theory
+pub fn identify_rare_sat(sat_position: u64, _block_height: u64) -> Option<(String, String)> {
+    // Genesis sat
+    if sat_position == 0 {
+        return Some(("genesis".to_string(), "Genesis Sat - First satoshi ever created".to_string()));
+    }
+    
+    let sats_per_block = 100;
+    let sat_in_block = sat_position % sats_per_block;
+    
+    // First sat of block
+    if sat_in_block == 0 {
+        let block_num = sat_position / sats_per_block;
+        return Some(("block".to_string(), format!("Block Founder - First sat of block {}", block_num)));
+    }
+    
+    // Last sat of block
+    if sat_in_block == sats_per_block - 1 {
+        let block_num = sat_position / sats_per_block;
+        return Some(("block-end".to_string(), format!("Block End - Last sat of block {}", block_num)));
+    }
+    
+    // Collector sats (ends with repeating digits)
+    let sat_str = sat_position.to_string();
+    if sat_str.len() >= 3 {
+        let last_three = &sat_str[sat_str.len().saturating_sub(3)..];
+        if last_three.chars().all(|c| c == last_three.chars().next().unwrap()) {
+            return Some(("collector".to_string(), format!("Collector Sat - Ends with {}", last_three)));
+        }
+    }
+    
+    // Round numbers
+    if sat_str.len() >= 5 {
+        if sat_str.starts_with('1') && sat_str.chars().skip(1).all(|c| c == '0') {
+            return Some(("round".to_string(), format!("Round Sat - {} sats", sat_position)));
+        }
+    }
+    
+    None
 }
