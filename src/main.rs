@@ -48,6 +48,13 @@ enum Commands {
     Send {
         destination: String,
         amount: u64,
+        #[arg(long, default_value = "false")]
+        coin_select: bool,
+    },
+    SendAll {
+        destination: String,
+        #[arg(long, default_value = "false")]
+        coin_select: bool,
     },
     SignPsbt {
         psbt_file: String,
@@ -76,6 +83,174 @@ enum Commands {
         #[arg(long, default_value = "false")]
         show_path: bool,
     },
+}
+
+use api::Utxo;
+use std::io::{self, Write};
+
+fn interactive_coin_selection(
+    rt: &tokio::runtime::Runtime,
+    api: &MempoolApi,
+    wallet: &Wallet,
+    dest_address: &Address,
+    amount: u64,
+    is_send_all: bool,
+) -> Result<(), String> {
+    let mut utxos = rt.block_on(api.fetch_utxos(wallet.get_address().to_string().as_str()))?;
+    
+    if utxos.is_empty() {
+        return Err("No UTXOs available".to_string());
+    }
+    
+    // Get ordinal info
+    let block_height = rt.block_on(api.get_block_height()).unwrap_or(0);
+    for utxo in &mut utxos {
+        utxo.has_inscription = rt.block_on(api.check_inscription(&utxo.txid, utxo.vout)).unwrap_or(false);
+        utxo.rare_info = identify_rare_sat(utxo.value, block_height);
+    }
+    
+    // All selected by default
+    let mut selected: Vec<bool> = vec![true; utxos.len()];
+    let mut current = 0usize;
+    
+    loop {
+        // Clear screen (simplified)
+        print!("\x1B[2J\x1B[H");
+        
+        let total_selected: u64 = utxos.iter().enumerate()
+            .filter(|(i, _)| selected[*i])
+            .map(|(_, u)| u.value)
+            .sum();
+        
+        let fee = 1000u64;
+        let send_amount = if is_send_all { total_selected.saturating_sub(fee) } else { amount };
+        
+        let mode_str = if is_send_all { "SEND ALL".to_string() } else { format!("SEND {} sats", amount) };
+        println!("\n🪙 COIN CONTROL - {}", mode_str);
+        println!("   Destination: {}", dest_address);
+        println!("   Selected: {} UTXOs / {} total", selected.iter().filter(|&&s| s).count(), utxos.len());
+        println!("   Total: {} sats", total_selected);
+        if !is_send_all {
+            println!("   Need: {} sats", amount);
+            println!("   Status: {} {}", 
+                if total_selected >= amount { "✅ OK" } else { "❌ INSUFFICIENT" },
+                if total_selected >= amount { "" } else { "(need more)" }
+            );
+        } else {
+            println!("   Will send: {} sats (after {} fee)", send_amount, fee);
+        }
+        
+        println!("\n{:3} {:8} {:12} {:25} {}", 
+            "#", "Status", "Value", "Features", "TXID:VOUT");
+        println!("{}", "-".repeat(75));
+        
+        for (i, u) in utxos.iter().enumerate() {
+            let marker = if i == current { ">" } else { " " };
+            let sel = if selected[i] { "[✓]" } else { "[ ]" };
+            let sel_marker = if i == current { "→" } else { " " };
+            
+            let mut features = String::new();
+            if u.has_inscription { features.push_str("📜 "); }
+            if let Some(ref r) = u.rare_info { features.push_str(&format!("⭐ ")); }
+            if features.is_empty() { features = "normal".to_string(); }
+            
+            let txid_short = format!("{}:{}", &u.txid[..8], u.vout);
+            println!("{}{:2} {} {:12} {:25} {}", marker, i + 1, sel, u.value, features, txid_short);
+        }
+        
+        println!("\n[1-{}] Toggle  [a]ll  [n]one  [r]are/inscribed  [Enter] Send  [q]uit", utxos.len());
+        
+        print!("\n> ");
+        io::stdout().flush().ok();
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).ok();
+        let input = input.trim();
+        
+        match input {
+            "q" | "Q" => {
+                println!("\n❌ Cancelled.");
+                return Ok(());
+            }
+            "" => {
+                // Enter - proceed
+                let selected_utxos: Vec<_> = utxos.iter().enumerate()
+                    .filter(|(i, _)| selected[*i])
+                    .map(|(_, u)| u.clone())
+                    .collect();
+                
+                if selected_utxos.is_empty() {
+                    println!("\n⚠️  No UTXOs selected!");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    continue;
+                }
+                
+                let total_sel: u64 = selected_utxos.iter().map(|u| u.value).sum();
+                if !is_send_all && total_sel < amount {
+                    println!("\n⚠️  Selected ({} sats) < amount ({} sats)", total_sel, amount);
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    continue;
+                }
+                
+                let send_amt = if is_send_all { total_sel.saturating_sub(fee) } else { amount };
+                
+                if send_amt == 0 || (is_send_all && total_sel <= fee) {
+                    println!("\n⚠️  Not enough for fee!");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    continue;
+                }
+                
+                println!("\n✅ Sending {} sats to {}...", send_amt, dest_address);
+                
+                let inputs: Vec<_> = selected_utxos.iter().map(|u| {
+                    let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
+                    let script = wallet.get_address().script_pubkey().as_bytes().to_vec();
+                    (txid, u.vout, Amount::from_sat(u.value), script)
+                }).collect();
+                
+                let psbt = create_send_psbt(
+                    &inputs,
+                    dest_address,
+                    Amount::from_sat(send_amt),
+                    wallet.get_address(),
+                    bitcoin::Network::Bitcoin,
+                ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
+                
+                let mut psbt = psbt;
+                let signed = wallet.sign_psbt(&mut psbt).map_err(|e| e.to_string())?;
+                println!("   ✍️  Signed {} input(s)", signed);
+                
+                wallet.finalize_psbt(&mut psbt).map_err(|e| e.to_string())?;
+                
+                let tx_hex = bitcoin::consensus::encode::serialize(&psbt.extract_tx().unwrap())
+                    .iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                
+                let txid = rt.block_on(api.broadcast_tx(&tx_hex)).map_err(|e| e.to_string())?;
+                println!("\n✅ Broadcast successful!");
+                println!("   TXID: {}", txid);
+                return Ok(());
+            }
+            "a" | "A" => {
+                for s in selected.iter_mut() { *s = true; }
+            }
+            "n" | "N" => {
+                for s in selected.iter_mut() { *s = false; }
+            }
+            "r" | "R" => {
+                for (i, u) in utxos.iter().enumerate() {
+                    selected[i] = u.has_inscription || u.rare_info.is_some();
+                }
+            }
+            _ => {
+                if let Ok(idx) = input.parse::<usize>() {
+                    if idx >= 1 && idx <= utxos.len() {
+                        selected[idx - 1] = !selected[idx - 1];
+                        current = idx - 1;
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -190,7 +365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
         }
         
-        Commands::Send { destination, amount } => {
+        Commands::Send { destination, amount, coin_select } => {
             let w = match &wallet {
                 Some(w) => w,
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
@@ -206,40 +381,132 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let api = MempoolApi::new(cli.testnet);
             
             let rt = tokio::runtime::Runtime::new()?;
-            let utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
+            let mut utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
             
             if utxos.is_empty() {
                 eprintln!("❌ No UTXOs available\n");
                 std::process::exit(1);
             }
             
-            let inputs: Vec<_> = utxos.iter().map(|u| {
-                let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
-                let script = w.get_address().script_pubkey().as_bytes().to_vec();
-                (txid, u.vout, Amount::from_sat(u.value), script)
-            }).collect();
-            
-            let amount_sat = Amount::from_sat(amount);
-            let psbt = create_send_psbt(
-                &inputs,
-                &dest_address,
-                amount_sat,
-                w.get_address(),
-                network,
-            ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
-            
-            println!("✅ PSBT created!");
-            println!("   Destination: {}", dest_address);
-            println!("   Amount: {} sats", amount);
-            println!("   Inputs: {}", inputs.len());
-            
-            let psbt_base64 = serialize_psbt(&psbt)?;
-            println!("\n📝 Unsigned PSBT (base64):\n");
-            for chunk in psbt_base64.as_bytes().chunks(64) {
-                println!("{}", String::from_utf8_lossy(chunk));
+            // Get ordinal info for each UTXO
+            let block_height = rt.block_on(api.get_block_height()).unwrap_or(0);
+            for utxo in &mut utxos {
+                utxo.has_inscription = rt.block_on(api.check_inscription(&utxo.txid, utxo.vout)).unwrap_or(false);
+                utxo.rare_info = identify_rare_sat(utxo.value, block_height);
             }
-            println!("\n💡 Import this PSBT into Sparrow/Hardware Wallet to sign.\n");
-            println!("   Then use: btc-wallet sign-psbt <signed-psbt-file>\n");
+            
+            if coin_select {
+                // Interactive coin selection
+                interactive_coin_selection(&rt, &api, &w, &dest_address, amount, false)?;
+            } else {
+                // Default: use all UTXOs
+                let inputs: Vec<_> = utxos.iter().map(|u| {
+                    let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
+                    let script = w.get_address().script_pubkey().as_bytes().to_vec();
+                    (txid, u.vout, Amount::from_sat(u.value), script)
+                }).collect();
+                
+                let amount_sat = Amount::from_sat(amount);
+                let psbt = create_send_psbt(
+                    &inputs,
+                    &dest_address,
+                    amount_sat,
+                    w.get_address(),
+                    network,
+                ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
+                
+                // Sign and broadcast
+                let mut psbt = psbt;
+                let signed = w.sign_psbt(&mut psbt)?;
+                println!("   ✍️  Signed {} input(s)", signed);
+                
+                w.finalize_psbt(&mut psbt)?;
+                
+                let tx_hex = bitcoin::consensus::encode::serialize(&psbt.extract_tx().unwrap()).iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                
+                let txid = rt.block_on(api.broadcast_tx(&tx_hex))?;
+                println!("\n✅ Broadcast successful!");
+                println!("   TXID: {}", txid);
+                println!("   {}\n", if cli.testnet { 
+                    format!("https://mempool.space/testnet/tx/{}", txid)
+                } else {
+                    format!("https://mempool.space/tx/{}", txid)
+                });
+            }
+        }
+        
+        Commands::SendAll { destination, coin_select } => {
+            let w = match &wallet {
+                Some(w) => w,
+                None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
+            };
+            
+            let dest_address = Address::from_str(&destination)
+                .map_err(|e| format!("Invalid address: {}", e))?;
+            
+            let dest_address = dest_address.require_network(network)
+                .map_err(|e| format!("Invalid address: {}", e))?;
+            
+            println!("\n📡 Fetching UTXOs...\n");
+            let api = MempoolApi::new(cli.testnet);
+            
+            let rt = tokio::runtime::Runtime::new()?;
+            let mut utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
+            
+            if utxos.is_empty() {
+                eprintln!("❌ No UTXOs available\n");
+                std::process::exit(1);
+            }
+            
+            let block_height = rt.block_on(api.get_block_height()).unwrap_or(0);
+            for utxo in &mut utxos {
+                utxo.has_inscription = rt.block_on(api.check_inscription(&utxo.txid, utxo.vout)).unwrap_or(false);
+                utxo.rare_info = identify_rare_sat(utxo.value, block_height);
+            }
+            
+            if coin_select {
+                interactive_coin_selection(&rt, &api, &w, &dest_address, 0, true)?;
+            } else {
+                let total: u64 = utxos.iter().map(|u| u.value).sum();
+                let fee = 1000u64;
+                let amount = total.saturating_sub(fee);
+                
+                if amount == 0 {
+                    eprintln!("❌ Not enough balance for fee\n");
+                    std::process::exit(1);
+                }
+                
+                let inputs: Vec<_> = utxos.iter().map(|u| {
+                    let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
+                    let script = w.get_address().script_pubkey().as_bytes().to_vec();
+                    (txid, u.vout, Amount::from_sat(u.value), script)
+                }).collect();
+                
+                let psbt = create_send_psbt(
+                    &inputs,
+                    &dest_address,
+                    Amount::from_sat(amount),
+                    w.get_address(),
+                    network,
+                ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
+                
+                let mut psbt = psbt;
+                let signed = w.sign_psbt(&mut psbt)?;
+                println!("   ✍️  Signed {} input(s)", signed);
+                
+                w.finalize_psbt(&mut psbt)?;
+                
+                let tx_hex = bitcoin::consensus::encode::serialize(&psbt.extract_tx().unwrap()).iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                
+                let txid = rt.block_on(api.broadcast_tx(&tx_hex))?;
+                println!("\n✅ Broadcast successful!");
+                println!("   TXID: {}", txid);
+                println!("   {}\n", if cli.testnet { 
+                    format!("https://mempool.space/testnet/tx/{}", txid)
+                } else {
+                    format!("https://mempool.space/tx/{}", txid)
+                });
+            }
         }
         
         Commands::SignPsbt { psbt_file, output } => {

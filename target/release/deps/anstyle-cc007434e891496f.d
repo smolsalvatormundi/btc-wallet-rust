@@ -1,0 +1,12 @@
+/home/ubuntu/btc-wallet-rust/target/release/deps/libanstyle-cc007434e891496f.rmeta: /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/lib.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/macros.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/color.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/effect.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/reset.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/style.rs
+
+/home/ubuntu/btc-wallet-rust/target/release/deps/libanstyle-cc007434e891496f.rlib: /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/lib.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/macros.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/color.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/effect.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/reset.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/style.rs
+
+/home/ubuntu/btc-wallet-rust/target/release/deps/anstyle-cc007434e891496f.d: /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/lib.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/macros.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/color.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/effect.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/reset.rs /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/style.rs
+
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/lib.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/macros.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/color.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/effect.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/reset.rs:
+/home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.13/src/style.rs:

@@ -16,6 +16,11 @@ pub struct Utxo {
     pub vout: u32,
     pub value: u64,
     pub status: Option<UtxoStatus>,
+    // Added for coin control
+    #[serde(default)]
+    pub has_inscription: bool,
+    #[serde(default)]
+    pub rare_info: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
