@@ -58,6 +58,12 @@ enum Commands {
         /// Interactive coin selection (pick which UTXOs to spend)
         #[arg(long = "coin-select", help = "Interactive coin selection (UTXO picker)", default_value = "false")]
         coin_select: bool,
+        /// Include specific UTXO(s) (format: txid:vout, can be repeated)
+        #[arg(long = "utxo", help = "Include specific UTXO (txid:vout)", value_delimiter = ',')]
+        utxo: Vec<String>,
+        /// Exclude specific UTXO(s) (format: txid:vout, can be repeated)
+        #[arg(long = "exclude-utxo", help = "Exclude specific UTXO (txid:vout)", value_delimiter = ',')]
+        exclude_utxo: Vec<String>,
     },
     /// Send all balance to an address (minus fee)
     SendAll {
@@ -65,6 +71,12 @@ enum Commands {
         /// Interactive coin selection (pick which UTXOs to spend)
         #[arg(long = "coin-select", help = "Interactive coin selection (UTXO picker)", default_value = "false")]
         coin_select: bool,
+        /// Include specific UTXO(s) (format: txid:vout, can be repeated)
+        #[arg(long = "utxo", help = "Include specific UTXO (txid:vout)", value_delimiter = ',')]
+        utxo: Vec<String>,
+        /// Exclude specific UTXO(s) (format: txid:vout, can be repeated)
+        #[arg(long = "exclude-utxo", help = "Exclude specific UTXO (txid:vout)", value_delimiter = ',')]
+        exclude_utxo: Vec<String>,
     },
     /// Sign a PSBT file with BIP86 key
     SignPsbt {
@@ -388,7 +400,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
         }
         
-        Commands::Send { destination, amount, coin_select } => {
+        Commands::Send { destination, amount, coin_select, utxo, exclude_utxo } => {
             let w = match &wallet {
                 Some(w) => w,
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
@@ -447,16 +459,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 utxo.rare_info = identify_rare_sat(utxo.value, block_height);
             }
             
+            // Non-interactive coin selection via flags
+            let has_utxo_filter = !utxo.is_empty() || !exclude_utxo.is_empty();
+            
             if coin_select {
                 // Interactive coin selection
                 interactive_coin_selection(&rt, &api, &w, &dest_address, amount_val, false)?;
-            } else {
-                // Default: use all UTXOs
-                let inputs: Vec<_> = utxos.iter().map(|u| {
+            } else if has_utxo_filter {
+                // Filter UTXOs based on flags
+                let mut selected_utxos: Vec<Utxo> = Vec::new();
+                
+                for u in &utxos {
+                    let utxo_key = format!("{}:{}", u.txid, u.vout);
+                    
+                    // Check if explicitly included
+                    let included = utxo.iter().any(|k| k == &utxo_key);
+                    
+                    // Check if explicitly excluded
+                    let excluded = exclude_utxo.iter().any(|k| k == &utxo_key);
+                    
+                    if included && !excluded {
+                        selected_utxos.push(u.clone());
+                    } else if !included && !excluded && utxo.is_empty() {
+                        // If no --utxo specified, include all non-excluded
+                        selected_utxos.push(u.clone());
+                    } else if !included && excluded {
+                        // explicitly excluded, skip
+                    } else if included && excluded {
+                        // both included and excluded, skip (exclusion wins)
+                    }
+                }
+                
+                if selected_utxos.is_empty() {
+                    eprintln!("❌ No UTXOs match the specified filters\n");
+                    std::process::exit(1);
+                }
+                
+                let inputs: Vec<_> = selected_utxos.iter().map(|u| {
                     let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
                     let script = w.get_address().script_pubkey().as_bytes().to_vec();
                     (txid, u.vout, Amount::from_sat(u.value), script)
                 }).collect();
+                
+                let total: u64 = selected_utxos.iter().map(|u| u.value).sum();
+                println!("   Selected {} UTXOs ({} sats)", selected_utxos.len(), total);
                 
                 let amount_sat = Amount::from_sat(amount_val);
                 let psbt = create_send_psbt(
@@ -487,7 +533,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         
-        Commands::SendAll { destination, coin_select } => {
+        Commands::SendAll { destination, coin_select, utxo, exclude_utxo } => {
             let w = match &wallet {
                 Some(w) => w,
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
@@ -533,10 +579,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 utxo.rare_info = identify_rare_sat(utxo.value, block_height);
             }
             
+            // Non-interactive coin selection via flags
+            let has_utxo_filter = !utxo.is_empty() || !exclude_utxo.is_empty();
+            
             if coin_select {
                 interactive_coin_selection(&rt, &api, &w, &dest_address, 0, true)?;
-            } else {
-                let total: u64 = utxos.iter().map(|u| u.value).sum();
+            } else if has_utxo_filter {
+                // Filter UTXOs based on flags
+                let mut selected_utxos: Vec<Utxo> = Vec::new();
+                
+                for u in &utxos {
+                    let utxo_key = format!("{}:{}", u.txid, u.vout);
+                    let included = utxo.iter().any(|k| k == &utxo_key);
+                    let excluded = exclude_utxo.iter().any(|k| k == &utxo_key);
+                    
+                    if included && !excluded {
+                        selected_utxos.push(u.clone());
+                    } else if !included && !excluded && utxo.is_empty() {
+                        selected_utxos.push(u.clone());
+                    }
+                }
+                
+                if selected_utxos.is_empty() {
+                    eprintln!("❌ No UTXOs match the specified filters\n");
+                    std::process::exit(1);
+                }
+                
+                let total: u64 = selected_utxos.iter().map(|u| u.value).sum();
                 let fee = 1000u64;
                 let amount = total.saturating_sub(fee);
                 
@@ -545,7 +614,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
                 
-                let inputs: Vec<_> = utxos.iter().map(|u| {
+                println!("   Selected {} UTXOs ({} sats)", selected_utxos.len(), total);
+                
+                let inputs: Vec<_> = selected_utxos.iter().map(|u| {
                     let txid = bitcoin::Txid::from_str(&u.txid).expect("Invalid txid");
                     let script = w.get_address().script_pubkey().as_bytes().to_vec();
                     (txid, u.vout, Amount::from_sat(u.value), script)
