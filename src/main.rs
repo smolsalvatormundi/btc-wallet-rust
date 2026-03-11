@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use api::{MempoolApi, identify_rare_sat};
-use wallet::{Wallet, create_send_psbt, parse_psbt, serialize_psbt};
+use wallet::{Wallet, create_send_psbt, parse_psbt, parse_psbt_from_bytes, serialize_psbt};
 
 fn get_wallet_dir() -> PathBuf {
     let home = dirs::home_dir().expect("No home directory");
@@ -248,17 +248,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
             };
             
-            let psbt_data: String = match fs::read_to_string(&psbt_file) {
-                Ok(s) => s,
-                Err(_) => {
-                    let bytes = fs::read(&psbt_file)
-                        .map_err(|e| format!("Failed to read PSBT file: {}", e))?;
-                    String::from_utf8_lossy(&bytes).to_string()
-                }
-            };
+            // Read as bytes to detect format
+            let psbt_bytes = fs::read(&psbt_file)
+                .map_err(|e| format!("Failed to read PSBT file: {}", e))?;
             
-            let psbt_base64 = psbt_data.trim();
-            let mut psbt = parse_psbt(psbt_base64)?;
+            let mut psbt = if psbt_bytes.len() >= 4 
+                && psbt_bytes[0] == 0x70  // 'p'
+                && psbt_bytes[1] == 0x73  // 's'
+                && psbt_bytes[2] == 0x62  // 'b'
+                && psbt_bytes[3] == 0x74  // 't'
+            {
+                // Binary PSBT
+                parse_psbt_from_bytes(&psbt_bytes)?
+            } else {
+                // Base64 PSBT
+                let psbt_str = String::from_utf8_lossy(&psbt_bytes);
+                parse_psbt(psbt_str.trim())?
+            };
             
             println!("\n🔐 Signing PSBT with BIP86 key...\n");
             
@@ -321,16 +327,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::Broadcast { psbt_file } => {
-            let psbt_data: String = match fs::read_to_string(&psbt_file) {
-                Ok(s) => s,
-                Err(_) => {
-                    let bytes = fs::read(&psbt_file)
-                        .map_err(|e| format!("Failed to read PSBT file: {}", e))?;
-                    String::from_utf8_lossy(&bytes).to_string()
-                }
-            };
+            // Read as bytes to detect format
+            let psbt_bytes = fs::read(&psbt_file)
+                .map_err(|e| format!("Failed to read PSBT file: {}", e))?;
             
-            let mut psbt = parse_psbt(psbt_data.trim())?;
+            let mut psbt = if psbt_bytes.len() >= 4 
+                && psbt_bytes[0] == 0x70
+                && psbt_bytes[1] == 0x73
+                && psbt_bytes[2] == 0x62
+                && psbt_bytes[3] == 0x74
+            {
+                parse_psbt_from_bytes(&psbt_bytes)?
+            } else {
+                let psbt_str = String::from_utf8_lossy(&psbt_bytes);
+                parse_psbt(psbt_str.trim())?
+            };
             
             let has_sigs = psbt.inputs.iter().any(|i| i.tap_key_sig.is_some() || i.final_script_witness.is_some());
             if !has_sigs {

@@ -317,6 +317,12 @@ pub fn parse_psbt(psbt_base64: &str) -> Result<Psbt, String> {
         .map_err(|e| format!("Failed to parse PSBT: {}", e))
 }
 
+/// Parse a PSBT from raw bytes (binary format)
+pub fn parse_psbt_from_bytes(bytes: &[u8]) -> Result<Psbt, String> {
+    Psbt::deserialize(bytes)
+        .map_err(|e| format!("Failed to parse binary PSBT: {}", e))
+}
+
 /// Serialize a PSBT to base64
 pub fn serialize_psbt(psbt: &Psbt) -> Result<String, String> {
     use base64::Engine;
