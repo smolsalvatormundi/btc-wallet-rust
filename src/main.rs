@@ -26,6 +26,7 @@ fn get_wallet_file() -> PathBuf {
 #[derive(Parser)]
 #[command(name = "btc-wallet")]
 #[command(about = "Smol BTC Wallet - BIP86 Taproot Wallet CLI", long_about = None)]
+#[command(version = "0.0.2")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
