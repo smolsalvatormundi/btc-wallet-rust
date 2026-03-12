@@ -160,6 +160,7 @@ impl MempoolApi {
     
     /// Check if a UTXO has an inscription
     pub async fn check_inscription(&self, txid: &str, vout: u32) -> Result<bool, String> {
+        // First try the outspend endpoint (works on mainnet)
         let url = format!("{}/tx/{}/outspend/{}", self.base_url, txid, vout);
         
         let client = reqwest::Client::new();
@@ -169,13 +170,45 @@ impl MempoolApi {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
         
-        if !response.status().is_success() {
-            return Ok(false);
+        if response.status().is_success() {
+            let outspend: Option<OutSpend> = response.json().await.ok();
+            if outspend.as_ref().and_then(|o| o.inscription.as_ref()).is_some() {
+                return Ok(true);
+            }
         }
         
-        let outspend: Option<OutSpend> = response.json().await.ok();
+        // Fallback: Check transaction witness data for ordinals protocol marker
+        // Ordinals use "ord" (0x6f7264) in witness as protocol marker
+        let tx_url = format!("{}/tx/{}", self.base_url, txid);
+        let tx_response = client
+            .get(&tx_url)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
         
-        Ok(outspend.map(|o| o.inscription.is_some()).unwrap_or(false))
+        if tx_response.status().is_success() {
+            let tx: serde_json::Value = tx_response.json()
+                .await
+                .map_err(|e| format!("JSON parse failed: {}", e))?;
+            
+            // Check each input's witness for ordinals marker
+            if let Some(vin) = tx.get("vin").and_then(|v| v.as_array()) {
+                for input in vin {
+                    if let Some(witness) = input.get("witness").and_then(|w| w.as_array()) {
+                        for witness_item in witness {
+                            if let Some(hex) = witness_item.as_str() {
+                                // Check for "6f7264" (hex for "ord") in witness
+                                if hex.contains("6f7264") {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(false)
     }
     
     /// Get current block height
