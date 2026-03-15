@@ -24,6 +24,31 @@ pub struct Utxo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tx {
+    pub txid: String,
+    pub version: i32,
+    pub locktime: u32,
+    pub vin: Vec<TxIn>,
+    pub vout: Vec<TxOut>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxIn {
+    pub txid: String,
+    pub vout: u32,
+    pub prevout: Option<TxOut>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxOut {
+    pub scriptpubkey: String,
+    pub scriptpubkey_asm: String,
+    pub scriptpubkey_type: String,
+    pub scriptpubkey_address: Option<String>,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UtxoStatus {
     pub confirmed: bool,
     pub block_height: Option<u64>,
@@ -59,6 +84,29 @@ impl MempoolApi {
             .map_err(|e| format!("Failed to parse UTXOs: {}", e))?;
         
         Ok(utxos)
+    }
+
+    /// Fetch a transaction by ID
+    pub async fn fetch_tx(&self, txid: &str) -> Result<Tx, String> {
+        let url = format!("{}/tx/{}", self.base_url, txid);
+        
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            return Err(format!("API error: {}", response.status()));
+        }
+        
+        let tx: Tx = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse transaction: {}", e))?;
+        
+        Ok(tx)
     }
 
     /// Get current fee estimates

@@ -4,7 +4,7 @@
 mod api;
 mod wallet;
 
-use bitcoin::{Address, Amount, Network};
+use bitcoin::{Address, Amount, Network, XOnlyPublicKey, Psbt, absolute::LockTime};
 use bip39::Mnemonic;
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -986,21 +986,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             
-            // For PayJoin, select one UTXO from receiver
-            // In practice, receiver would choose which UTXO to contribute
-            // For simplicity, use the smallest UTXO >= amount
+            // Find a UTXO that can cover the payment + fee
+            let fee = 1000u64;
+            let needed = amount + fee;
             let selected_utxo = utxos.iter()
-                .find(|u| u.value >= amount + 1000); // extra for fee
+                .find(|u| u.value >= needed);
             
             let utxo = match selected_utxo {
                 Some(u) => u,
                 None => {
-                    // Try smallest UTXO anyway
+                    // Use smallest UTXO
                     utxos.iter().min_by_key(|u| u.value).unwrap()
                 }
             };
             
-            // Create PSBT with receiver's UTXO
+            println!("   Using UTXO: {}:{} ({} sats)", 
+                &utxo.txid[..8], utxo.vout, utxo.value);
+            
+            // Create the PayJoin PSBT using existing function
+            // This creates a PSBT that the sender can then add their input to
             let txid = bitcoin::Txid::from_str(&utxo.txid).expect("Invalid txid");
             let script = w.get_address().script_pubkey().as_bytes().to_vec();
             let inputs = vec![(txid, utxo.vout, Amount::from_sat(utxo.value), script)];
@@ -1019,7 +1023,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\n📝 Send this PSBT to the sender:");
             println!("{}", psbt_base64);
             println!("\n💡 The sender will add their input and sign.");
-            println!("   They will return a signed PSBT for you to finalize.\n");
+            println!("   They will return a signed PSBT for you to finalize with:\n");
+            println!("   btc-wallet sign-psbt <file> --output <signed.psbt>");
+            println!("   btc-wallet broadcast <signed.psbt>\n");
         }
         
         // ===== PAYJOIN SEND =====
