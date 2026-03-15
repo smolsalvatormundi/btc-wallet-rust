@@ -1037,19 +1037,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             println!("\n🪙 Processing PayJoin send...");
             
-            // Read receiver's PSBT
-            let psbt_bytes = fs::read(&psbt_file)
+            // Read receiver's PSBT - try both binary and base64
+            let psbt_data = fs::read(&psbt_file)
                 .map_err(|e| format!("Failed to read PSBT file: {}", e))?;
             
-            let mut psbt = if psbt_bytes.len() >= 4 
-                && psbt_bytes[0] == 0x70
-                && psbt_bytes[1] == 0x73
-                && psbt_bytes[2] == 0x62
-                && psbt_bytes[3] == 0x74
+            let mut psbt = if psbt_data.len() >= 4 
+                && psbt_data[0] == 0x70  // 'p'
+                && psbt_data[1] == 0x73  // 's'
+                && psbt_data[2] == 0x62  // 'b'
+                && psbt_data[3] == 0x74  // 't'
             {
-                parse_psbt_from_bytes(&psbt_bytes)?
+                println!("   Parsing as binary PSBT...");
+                parse_psbt_from_bytes(&psbt_data)?
             } else {
-                let psbt_str = String::from_utf8_lossy(&psbt_bytes);
+                // Try as base64
+                let psbt_str = String::from_utf8_lossy(&psbt_data);
+                println!("   Parsing as base64 PSBT...");
                 parse_psbt(psbt_str.trim())?
             };
             
