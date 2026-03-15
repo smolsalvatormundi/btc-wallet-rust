@@ -123,6 +123,9 @@ enum Commands {
     PayjoinSend {
         /// Input PSBT from receiver
         psbt_file: String,
+        /// Receiver's address (required to create combined PSBT)
+        #[arg(long = "receiver", help = "Receiver's address")]
+        receiver: Option<String>,
     },
     /// Show derivation path information
     Derive {
@@ -1029,7 +1032,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         // ===== PAYJOIN SEND =====
-        Commands::PayjoinSend { psbt_file } => {
+        Commands::PayjoinSend { psbt_file, receiver } => {
+            // Get receiver's address - required
+            let receiver_addr = match receiver {
+                Some(ref addr) => addr.clone(),
+                None => {
+                    eprintln!("❌ --receiver address required for PayJoin\n");
+                    std::process::exit(1);
+                }
+            };
             let w = match &wallet {
                 Some(w) => w,
                 None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
@@ -1037,26 +1048,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             println!("\n🪙 Processing PayJoin send...");
             
-            // Read receiver's PSBT - try both binary and base64
+            // Read receiver's PSBT
             let psbt_data = fs::read(&psbt_file)
                 .map_err(|e| format!("Failed to read PSBT file: {}", e))?;
             
-            let mut psbt = if psbt_data.len() >= 4 
-                && psbt_data[0] == 0x70  // 'p'
-                && psbt_data[1] == 0x73  // 's'
-                && psbt_data[2] == 0x62  // 'b'
-                && psbt_data[3] == 0x74  // 't'
+            let psbt = if psbt_data.len() >= 4 
+                && psbt_data[0] == 0x70
+                && psbt_data[1] == 0x73
+                && psbt_data[2] == 0x62
+                && psbt_data[3] == 0x74
             {
                 println!("   Parsing as binary PSBT...");
                 parse_psbt_from_bytes(&psbt_data)?
             } else {
-                // Try as base64
                 let psbt_str = String::from_utf8_lossy(&psbt_data);
                 println!("   Parsing as base64 PSBT...");
                 parse_psbt(psbt_str.trim())?
             };
             
-            // Get our UTXOs
+            // Extract receiver's input info from PSBT
+            let receiver_input = &psbt.inputs[0];
+            let receiver_prevout = receiver_input.witness_utxo.as_ref()
+                .ok_or("Receiver PSBT missing witness_utxo")?;
+            let receiver_value = receiver_prevout.value;
+            let receiver_txid = psbt.unsigned_tx.input[0].previous_output.txid;
+            let receiver_vout = psbt.unsigned_tx.input[0].previous_output.vout;
+            
+            // Get the receiver's payment output
+            let receiver_payment = psbt.unsigned_tx.output[0].value;
+            
+            println!("   Receiver input: {} sats", receiver_value);
+            println!("   Receiver payment: {} sats", receiver_payment);
+            
+            // Get sender's UTXOs
             let api = MempoolApi::new(cli.testnet);
             let rt = tokio::runtime::Runtime::new()?;
             let sender_utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
@@ -1066,83 +1090,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             
-            // Find our best UTXO to use (largest that can cover fees)
-            let our_utxo = sender_utxos.iter().max_by_key(|u| u.value).unwrap();
-            println!("   Using our UTXO: {}:{} ({} sats)", 
-                &our_utxo.txid[..8], our_utxo.vout, our_utxo.value);
+            // Use largest UTXO
+            let sender_utxo = sender_utxos.iter().max_by_key(|u| u.value).unwrap();
+            println!("   Sender UTXO: {}:{} ({} sats)", 
+                &sender_utxo.txid[..8], sender_utxo.vout, sender_utxo.value);
             
-            // Fetch the full transaction to get the UTXO details
-            let tx_response = rt.block_on(api.fetch_tx(&our_utxo.txid))?;
-            let txout = &tx_response.vout[our_utxo.vout as usize];
+            // Fetch sender UTXO details
+            let sender_tx = rt.block_on(api.fetch_tx(&sender_utxo.txid))?;
+            let sender_prevout = &sender_tx.vout[sender_utxo.vout as usize];
+            let sender_script = hex::decode(&sender_prevout.scriptpubkey)
+                .map_err(|e| format!("Failed to decode script: {}", e))?;
             
-            // Get the receiver's original output value
-            let receiver_output_value = psbt.unsigned_tx.output[0].value;
-            println!("   Receiver output: {} sats", receiver_output_value);
-            
-            // Add our input to the transaction
-            // For PayJoin, we need to add our UTXO as an additional input
-            use bitcoin::blockdata::transaction::TxIn;
-            
-            let tx = psbt.unsigned_tx.clone();
-            let mut new_tx = tx.clone();
-            
-            // Add our input
-            new_tx.input.push(TxIn {
-                previous_output: bitcoin::OutPoint::new(
-                    bitcoin::Txid::from_str(&our_utxo.txid).expect("Invalid txid"),
-                    our_utxo.vout
+            // Create combined PSBT with both inputs
+            let inputs = vec![
+                // Receiver's input
+                (
+                    receiver_txid,
+                    receiver_vout,
+                    receiver_value,
+                    receiver_prevout.script_pubkey.as_bytes().to_vec(),
                 ),
-                sequence: bitcoin::Sequence::MAX,
-                witness: bitcoin::Witness::new(),
-                script_sig: bitcoin::ScriptBuf::new(),
-            });
+                // Sender's input
+                (
+                    bitcoin::Txid::from_str(&sender_utxo.txid)
+                        .map_err(|e| format!("Invalid sender txid: {}", e))?,
+                    sender_utxo.vout,
+                    Amount::from_sat(sender_utxo.value),
+                    sender_script,
+                ),
+            ];
             
-            // Add our change output (our input value - receiver's payment - fees)
-            // PayJoin rule: sender pays their own fee, doesn't increase payment to receiver
-            let fee_per_input = 500u64; // Estimated fee per input
-            let total_fee = fee_per_input * 2; // Input for receiver + our input
-            let our_change = our_utxo.value.saturating_sub(total_fee);
+            // For PayJoin, use receiver's original payment address (from output script)
+            // We can't easily extract the address from script, so use a placeholder
+            // The receiver will need to provide this or we use the first output's script directly
+            let fee = 1000u64;
+            let sender_change = sender_utxo.value.saturating_sub(fee);
             
-            if our_change > 546 {
-                new_tx.output.push(bitcoin::blockdata::transaction::TxOut {
-                    value: Amount::from_sat(our_change),
-                    script_pubkey: w.get_address().script_pubkey(),
-                });
-            }
+            // Parse receiver address
+            let receiver_address = Address::from_str(&receiver_addr)
+                .map_err(|e| format!("Invalid receiver address: {}", e))?;
+            let receiver_address = receiver_address.require_network(network)
+                .map_err(|e| format!("Invalid address for network: {}", e))?;
             
-            // Create new PSBT with our input
-            let mut new_psbt = Psbt::from_unsigned_tx(new_tx)
-                .map_err(|e| format!("Failed to create PSBT: {}", e))?;
+            // Create PSBT - receiver gets their payment, sender gets change
+            let combined_psbt = create_send_psbt(
+                &inputs,
+                &receiver_address,
+                receiver_payment,
+                w.get_address(),
+                network,
+            ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
             
-            // Copy over receiver's original input data
-            new_psbt.inputs[0] = psbt.inputs[0].clone();
-            
-            // Add our input's witness_utxo
-            let script_bytes = hex::decode(&txout.scriptpubkey).unwrap_or_default();
-            new_psbt.inputs.push(bitcoin::psbt::Input {
-                witness_utxo: Some(bitcoin::TxOut {
-                    value: Amount::from_sat(our_utxo.value),
-                    script_pubkey: bitcoin::ScriptBuf::from(script_bytes),
-                }),
-                ..Default::default()
-            });
-            
-            // Copy over outputs
-            for (i, output) in psbt.unsigned_tx.output.iter().enumerate() {
-                new_psbt.outputs.push(psbt.outputs[i].clone());
-            }
-            
-            // Sign our input (index 1, the second input)
-            // The signing function will sign all inputs it can
-            let signed = w.sign_psbt(&mut new_psbt)?;
+            // Sign - the sign_psbt function will sign inputs we can sign
+            let mut psbt_to_sign = combined_psbt;
+            let signed = w.sign_psbt(&mut psbt_to_sign)?;
             println!("   ✍️  Signed {} input(s)", signed);
             
-            // Output the signed PSBT for receiver to finalize
-            let psbt_base64 = serialize_psbt(&new_psbt)?;
+            // Output
+            let psbt_base64 = serialize_psbt(&psbt_to_sign)?;
             println!("\n✅ PayJoin PSBT signed!");
-            println!("\n📝 Send this PSBT back to the receiver to finalize:");
+            println!("\n📝 Send this PSBT back to the receiver:");
             println!("{}", psbt_base64);
-            println!("\n💡 The receiver will broadcast this transaction.\n");
+            println!("\n💡 The receiver will finalize and broadcast.\n");
         }
         
         Commands::Derive { show_path } => {
