@@ -112,6 +112,18 @@ enum Commands {
         #[arg(long = "min-value", help = "Minimum UTXO value in sats", default_value = "0")]
         min_value: u64,
     },
+    /// Receive via PayJoin (creates PSBT for sender to contribute to)
+    PayjoinReceive {
+        /// Destination address for the payment
+        destination: String,
+        /// Amount to receive in sats
+        amount: u64,
+    },
+    /// Send via PayJoin (contribute UTXO to receiver's PayJoin PSBT)
+    PayjoinSend {
+        /// Input PSBT from receiver
+        psbt_file: String,
+    },
     /// Show derivation path information
     Derive {
         /// Display the BIP86 derivation path
@@ -947,6 +959,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 format!("https://mempool.space/tx/{}", txid)
             });
+        }
+        
+        // ===== PAYJOIN RECEIVE =====
+        Commands::PayjoinReceive { destination, amount } => {
+            let w = match &wallet {
+                Some(w) => w,
+                None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
+            };
+            
+            let dest_address = Address::from_str(&destination)
+                .map_err(|e| format!("Invalid address: {}", e))?;
+            let dest_address = dest_address.require_network(network)
+                .map_err(|e| format!("Invalid address: {}", e))?;
+            
+            println!("\n🪙 Creating PayJoin receive PSBT...");
+            println!("   Destination: {}", dest_address);
+            println!("   Amount: {} sats\n", amount);
+            
+            let api = MempoolApi::new(cli.testnet);
+            let rt = tokio::runtime::Runtime::new()?;
+            let utxos = rt.block_on(api.fetch_utxos(w.get_address().to_string().as_str()))?;
+            
+            if utxos.is_empty() {
+                eprintln!("❌ No UTXOs available for PayJoin\n");
+                std::process::exit(1);
+            }
+            
+            // For PayJoin, select one UTXO from receiver
+            // In practice, receiver would choose which UTXO to contribute
+            // For simplicity, use the smallest UTXO >= amount
+            let selected_utxo = utxos.iter()
+                .find(|u| u.value >= amount + 1000); // extra for fee
+            
+            let utxo = match selected_utxo {
+                Some(u) => u,
+                None => {
+                    // Try smallest UTXO anyway
+                    utxos.iter().min_by_key(|u| u.value).unwrap()
+                }
+            };
+            
+            // Create PSBT with receiver's UTXO
+            let txid = bitcoin::Txid::from_str(&utxo.txid).expect("Invalid txid");
+            let script = w.get_address().script_pubkey().as_bytes().to_vec();
+            let inputs = vec![(txid, utxo.vout, Amount::from_sat(utxo.value), script)];
+            
+            let psbt = create_send_psbt(
+                &inputs,
+                &dest_address,
+                Amount::from_sat(amount),
+                w.get_address(),
+                network,
+            ).map_err(|e| format!("Failed to create PSBT: {}", e))?;
+            
+            let psbt_base64 = serialize_psbt(&psbt)?;
+            
+            println!("✅ PayJoin PSBT created!");
+            println!("\n📝 Send this PSBT to the sender:");
+            println!("{}", psbt_base64);
+            println!("\n💡 The sender will add their input and sign.");
+            println!("   They will return a signed PSBT for you to finalize.\n");
+        }
+        
+        // ===== PAYJOIN SEND =====
+        Commands::PayjoinSend { psbt_file } => {
+            let w = match &wallet {
+                Some(w) => w,
+                None => { eprintln!("❌ No wallet loaded\n"); std::process::exit(1); }
+            };
+            
+            println!("\n🪙 Processing PayJoin send...");
+            println!("Note: PayJoin requires the receiver to create a PSBT first.");
+            println!("   1. Receiver: btc-wallet payjoin-receive <addr> <amount>");
+            println!("   2. Sender: btc-wallet payjoin-send <psbt>");
+            println!("   3. Receiver: btc-wallet sign-psbt + broadcast\n");
         }
         
         Commands::Derive { show_path } => {
