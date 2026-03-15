@@ -117,6 +117,10 @@ impl Wallet {
         // Apply BIP341 key tweak to get the spending key
         let tweaked_keypair = self.keypair.tap_tweak(&secp, None);
         
+        // Get our address's script - we'll compare this with input scripts
+        let our_script = self.get_address().script_pubkey();
+        let our_script_bytes = our_script.as_bytes();
+        
         // Build prevouts - need all input outputs
         let prevout_values: Vec<bitcoin::TxOut> = psbt.inputs.iter()
             .filter_map(|input| input.witness_utxo.clone())
@@ -133,6 +137,16 @@ impl Wallet {
                 
                 // Check if it's P2TR (OP_1 followed by 32 bytes)
                 if script_bytes.len() == 34 && script_bytes[0] == 0x51 && script_bytes[1] == 0x20 {
+                    // Check if we own this input - compare scripts directly
+                    // Our script should match the input's witness_utxo script
+                    if script_bytes != our_script_bytes {
+                        eprintln!("DEBUG sign: input {} not ours, skipping", i);
+                        println!("   Skipping input {} - not our wallet", i + 1);
+                        continue;
+                    }
+                    
+                    eprintln!("DEBUG sign: input {} IS ours, will sign", i);
+                    
                     // Set tap_internal_key to our INTERNAL key (critical for BIP86)
                     if input.tap_internal_key.is_none() {
                         input.tap_internal_key = Some(our_internal_key);
@@ -168,13 +182,35 @@ impl Wallet {
     }
     
     /// Finalize a signed PSBT - for Taproot this means setting final_script_witness
+    /// Finalizes ALL inputs that have signatures (not just ours) - needed for PayJoin
     pub fn finalize_psbt(&self, psbt: &mut Psbt) -> Result<(), String> {
         use bitcoin::Witness;
         
-        // For Taproot BIP86 key-path spending
-        for input in psbt.inputs.iter_mut() {
-            if let Some(tap_sig) = &input.tap_key_sig {
-                // Get the signature bytes
+        // Get our script for comparison
+        let our_script = self.get_address().script_pubkey();
+        let our_script_bytes = our_script.as_bytes();
+        
+        // For Taproot BIP86 key-path spending - finalize ANY input with a signature
+        for (i, input) in psbt.inputs.iter_mut().enumerate() {
+            // Check if we own this input (for logging)
+            let is_ours = input.witness_utxo.as_ref()
+                .map(|utxo| {
+                    let sb = utxo.script_pubkey.as_bytes();
+                    sb.len() == 34 && sb[0] == 0x51 && sb[1] == 0x20 && sb == our_script_bytes
+                })
+                .unwrap_or(false);
+            
+            eprintln!("DEBUG finalize: input {} is_ours={}, has_sig={}", i, is_ours, input.tap_key_sig.is_some());
+            
+            // For PayJoin: finalize ANY input that has a signature, not just ours
+            // This is needed because the other party already signed their input
+            if input.tap_key_sig.is_none() {
+                continue;
+            }
+            
+            // Get the signature bytes
+            let tap_sig = input.tap_key_sig.take(); // Take removes from input
+            if let Some(tap_sig) = tap_sig {
                 let sig_bytes = tap_sig.to_vec();
                 
                 // Set the final witness - for BIP86 key-path it's just [signature]
@@ -182,9 +218,7 @@ impl Wallet {
                 witness.push(&sig_bytes);
                 input.final_script_witness = Some(witness);
                 
-                // CRITICAL: Clear signing data - BIP174 requirement before broadcast
-                // The signature is now in final_script_witness
-                input.tap_key_sig = None;
+                // Clear signing data - BIP174 requirement before broadcast
                 input.tap_internal_key = None;
             }
         }
